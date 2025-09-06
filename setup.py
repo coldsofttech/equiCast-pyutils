@@ -8,7 +8,8 @@ setup(
     license="MIT",
     author="coldsofttech",
     install_requires=[
-        "pandas==2.3.2"
+        "pandas==2.3.2",
+        "pyarrow==21.0.0"
     ],
     requires_python=">=3.10"
 )
