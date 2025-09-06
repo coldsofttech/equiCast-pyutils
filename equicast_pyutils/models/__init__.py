@@ -1,3 +1,6 @@
 __all__ = [
-    "fx"
+    "fx",
+    "ExportableModel"
 ]
+
+from .base import ExportableModel
