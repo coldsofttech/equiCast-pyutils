@@ -132,9 +132,6 @@ jobs:
           name: pyutils-dist
           path: dist
 
-      - name: Public to GitHub Packages
-        env:
-          TWINE_USERNAME: __token__
-          TWINE_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish to GitHub Packages
         run: |
-          python -m twine upload --repository-url https://upload.pypi.github.com/coldsofttech/equiCast-pyutils dist/*
+          python -m twine upload --repository-url https://api.github.com/orgs/${{ github.repository_owner }}/packages/pypi/upload dist/*
