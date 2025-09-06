@@ -68,7 +68,7 @@ REM Install the generated distribution
 echo Installing the package...
 for %%f in (%DIST_PACKAGE%) do (
     echo Installing %%f...
-    python -m pip install "%%f"
+    pip install -e .
 )
 
 REM Execute pytest with output redirection to a file
