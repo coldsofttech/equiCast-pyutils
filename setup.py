@@ -1,15 +1,16 @@
-from setuptools import setup
+from setuptools import setup, find_packages
+
+with open('requirements.txt') as f:
+    requirements = f.read().splitlines()
 
 setup(
     name="equicast_pyutils",
     version="0.1",
-    packages=["equicast_pyutils"],
+    packages=find_packages(),
     url="https://github.com/coldsofttech/equiCast-pyutils",
     license="MIT",
     author="coldsofttech",
-    install_requires=[
-        "pandas==2.3.2",
-        "pyarrow==21.0.0"
-    ],
-    requires_python=">=3.10"
+    install_requires=requirements,
+    requires_python=">=3.10",
+    setup_requires=["setuptools-git-versioning"]
 )
