@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=61", "wheel", "setuptools-git-versioning"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "equicast_pyutils"
+version = "0.1.0"
+description = "Python Utils for equiCast"
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "coldsofttech", email = "coldsoft.mail@gmail.com" }]
+requires-python = ">=3.10"
+dependencies = [
+    "requests>=2.31.0",
+    "pandas>=2.1.0"
+]
+
+classifiers = [
+    "Programming Language :: Python :: 3.13",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent"
+]
