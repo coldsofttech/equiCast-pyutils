@@ -84,8 +84,7 @@ jobs:
                 --repository "$REPO" \
                 --format pypi \
                 --package "$PACKAGE_NAME" \
-                --versions "$VERSION" \
-                --delete-all-revisions
+                --versions "$VERSION"
             done
           else
             echo "No existing versions found."
