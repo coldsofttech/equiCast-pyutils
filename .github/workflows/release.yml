@@ -25,6 +25,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install build twine
+          pip install --target=equicast_pyutils/_vendor -r requirements.txt
 
       - name: Build Package
         run: python -m build
@@ -56,9 +57,53 @@ jobs:
           echo "token=$TOKEN" >> "$GITHUB_OUTPUT"
           echo "endpoint=$ENDPOINT" >> "$GITHUB_OUTPUT"
 
+      - name: Delete Older Versions from CodeArtifact
+        env:
+          TOKEN: ${{ steps.codeartifact.outputs.token }}
+        run: |
+          PACKAGE_NAME="equicast-pyutils"
+          DOMAIN="${{ secrets.PYUTILS_CODEARTIFACT_DOMAIN }}"
+          REPO="${{ secrets.PYUTILS_CODEARTIFACT_REPO }}"
+          OWNER="${{ secrets.PYUTILS_CODEARTIFACT_OWNER }}"
+
+          VERSIONS=$(aws codeartifact list-package-versions \
+            --domain "$DOMAIN" \
+            --domain-owner "$OWNER" \
+            --repository "$REPO" \
+            --format pypi \
+            --package "$PACKAGE_NAME" \
+            --query 'versions[*].version' \
+            --output text)
+
+          if [ -n "$VERSIONS" ]; then
+            echo "Deleting existing versions: $VERSIONS"
+            for VERSION in $VERSIONS; do
+              aws codeartifact delete-package-versions \
+                --domain "$DOMAIN" \
+                --domain-owner "$OWNER" \
+                --repository "$REPO" \
+                --format pypi \
+                --package "$PACKAGE_NAME" \
+                --versions "$VERSION" \
+                --delete-all-revisions
+            done
+          else
+            echo "No existing versions found."
+          fi
+
       - name: Publish to CodeArtifact
         env:
           TWINE_USERNAME: aws
           TWINE_PASSWORD: ${{ steps.codeartifact.outputs.token }}
           TWINE_REPOSITORY_URL: ${{ steps.codeartifact.outputs.endpoint }}
         run: twine upload --non-interactive dist/*
+
+      - name: Store Release Tag in SSM Parameter
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          aws ssm put-parameter \
+            --name "/equicast/pyutils/version" \
+            --value "$RELEASE_TAG" \
+            --type "String" \
+            --overwrite
