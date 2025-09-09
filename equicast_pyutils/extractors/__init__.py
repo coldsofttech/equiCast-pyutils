@@ -1,5 +1,7 @@
 __all__ = [
-    "FxDataExtractor"
+    "FxDataExtractor",
+    "StockDataExtractor"
 ]
 
 from .fx_data_extractor import FxDataExtractor
+from .stock_data_extractor import StockDataExtractor
