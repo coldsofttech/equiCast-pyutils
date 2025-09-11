@@ -13,6 +13,7 @@ def stock_price_model():
     model = StockPriceModel(ticker="AAPL")
     model.add_price("2025-01-01", 172.56)
     model.add_price("2025-01-02", 173.48)
+    model.currency = "USD"
     return model
 
 
@@ -21,6 +22,7 @@ def test_to_json_string(stock_price_model):
     data = json.loads(json_str)
 
     assert data["ticker"] == "AAPL"
+    assert data["currency"] == "USD"
     assert "2025-01-01" in data["prices"]
     assert data["prices"]["2025-01-01"] == 172.56
     assert "lastUpdated" in data["metadata"]
@@ -43,9 +45,10 @@ def test_to_parquet_file(stock_price_model):
 
         df = pd.read_parquet(filepath)
 
-        assert set(["ticker", "date", "price"]).issubset(df.columns)
+        assert set(["ticker", "currency", "date", "price"]).issubset(df.columns)
         row = df[df["date"] == "2025-01-01"].iloc[0]
         assert row["ticker"] == "AAPL"
+        assert row["currency"] == "USD"
         assert row["price"] == 172.56
 
 
@@ -62,6 +65,6 @@ def test_add_price_invalid_date(stock_price_model):
 
 def test_to_dataframe_structure(stock_price_model):
     df = stock_price_model._to_dataframe()
-    assert list(df.columns) == ["ticker", "date", "price"]
+    assert list(df.columns) == ["ticker", "currency", "date", "price"]
     assert len(df) == len(stock_price_model.prices)
     assert 172.56 in df["price"].values
