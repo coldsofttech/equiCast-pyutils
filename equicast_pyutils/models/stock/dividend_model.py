@@ -8,7 +8,7 @@ from equicast_pyutils.models.base import ExportableModel
 
 
 @dataclass
-class StockPriceModel(ExportableModel):
+class DividendModel(ExportableModel):
     ticker: str
     currency: str = field(default_factory=str)
     prices: Dict[str, float] = field(default_factory=dict)
