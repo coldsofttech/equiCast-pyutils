@@ -6,6 +6,7 @@ import yfinance as yf
 
 from equicast_pyutils.extractors.retry import retry
 from equicast_pyutils.models.stock import StockPriceModel
+from equicast_pyutils.models.stock.dividend_model import DividendModel
 
 
 @dataclass
@@ -24,6 +25,12 @@ class StockDataExtractor:
                 raise ValueError(f"Failed to create yfinance object for {self.ticker}: {e}")
         return self._yf_obj
 
+    def _safe_get(self, info, key, default=None):
+        try:
+            return info.get(key, default)
+        except Exception:
+            return default
+
     @retry(delay=2)
     def _get_history(self, period="1y", interval="1d"):
         time.sleep(random.uniform(0.1, 0.5))
@@ -41,12 +48,43 @@ class StockDataExtractor:
             raise ValueError("No historical data found for the specified ticker.")
         return data
 
+    @retry(delay=2)
+    def _get_dividends(self):
+        time.sleep(random.uniform(0.1, 0.5))
+        return self.yf_obj.dividends
+
+    @retry(delay=2)
+    def _get_info(self):
+        time.sleep(random.uniform(0.1, 0.5))
+        info = self.yf_obj.info
+        if not info or len(info) < 5:
+            info = self.yf_obj.get_info()
+
+        if not info or len(info) < 5:
+            raise ValueError("No info found for the specified ticker.")
+        return info
+
     def extract_stock_price_data(self) -> StockPriceModel:
         history = self._get_history(period="max")
         price_col = "Adj Close" if "Adj Close" in history.columns else "Close"
         prices_dict = {d.strftime("%Y-%m-%d"): float(p) for d, p in history[price_col].items()}
+        info = self._get_info()
+        currency = self._safe_get(info, "currency", "")
 
         return StockPriceModel(
             ticker=self.ticker,
-            prices=prices_dict
+            prices=prices_dict,
+            currency=currency
         )
+
+    def extract_dividends(self):
+        dividends = self._get_dividends()
+        prices_dict = {d.strftime("%Y-%m-%d"): float(p) for d, p in dividends.items()}
+        info = self._get_info()
+        currency = self._safe_get(info, "currency", "")
+
+        return DividendModel(
+            ticker=self.ticker,
+            prices=prices_dict,
+            currency=currency
+        ) if len(prices_dict) > 0 else None

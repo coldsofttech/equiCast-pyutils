@@ -11,6 +11,7 @@ class MockTicker:
     def __init__(self, ticker):
         self.ticker = ticker
         self.call_count = 0
+        self.info = {"currency": "USD"}
 
     def history(self, period="1y", interval="1d"):
         self.call_count += 1
@@ -26,6 +27,7 @@ class MockTicker:
 class EmptyTicker:
     def __init__(self, ticker):
         self.ticker = ticker
+        self.info = {"currency": "USD"}
 
     def history(self, period="1y", interval="1d"):
         return pd.DataFrame()
@@ -39,6 +41,11 @@ def patch_yf_ticker(monkeypatch):
 @pytest.fixture
 def patch_empty_ticker(monkeypatch):
     monkeypatch.setattr("yfinance.Ticker", EmptyTicker)
+
+
+@pytest.fixture(autouse=True)
+def patch_sleep(monkeypatch):
+    monkeypatch.setattr("time.sleep", lambda x: None)
 
 
 def test_yf_obj_initialization(patch_yf_ticker):
@@ -55,11 +62,22 @@ def test_get_history_with_fallback(patch_yf_ticker):
     assert len(history) == 3
 
 
-def test_extract_stock_price_returns_model(patch_yf_ticker):
+def test_extract_stock_price_returns_model(monkeypatch, patch_yf_ticker):
     extractor = StockDataExtractor(ticker="AAPL")
+    monkeypatch.setattr(extractor, "_get_info", lambda: {"currency": "USD"})
+    monkeypatch.setattr(
+        extractor, "_get_history",
+        lambda period="1y": pd.DataFrame({
+            "Close": [1.1, 1.2, 1.15],
+            "Adj Close": [1.1, 1.2, 1.15]
+        }, index=pd.to_datetime(["2023-09-01", "2023-09-02", "2023-09-03"]))
+    )
+
     model = extractor.extract_stock_price_data()
+
     assert isinstance(model, StockPriceModel)
     assert model.ticker == "AAPL"
+    assert model.currency == "USD"
     assert len(model.prices) == 3
     for date_str, price in model.prices.items():
         datetime.strptime(date_str, "%Y-%m-%d")
