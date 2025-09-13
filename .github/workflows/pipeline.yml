@@ -57,7 +57,10 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements-dev.txt
           pip install -r requirements.txt
-          pip install -e .
+
+      - name: Install Package
+        run: |
+          pip install .
 
       - name: Run Test Cases
         run: |
@@ -96,16 +99,9 @@ jobs:
         run: |
           python setup.py sdist bdist_wheel
 
-      - name: Get Package
-        run: |
-          path_separator="/"
-          latestFile=$(ls -t dist/ | head -n 1)
-          echo "Latest file: $latestFile"
-          echo "PACKAGE_NAME=dist$path_separator$latestFile" >> $GITHUB_ENV
-
       - name: Install Package
         run: |
-          pip install ${{ env.PACKAGE_NAME }}
+          pip install .
 
       - name: Upload Package
         uses: actions/upload-artifact@v4
