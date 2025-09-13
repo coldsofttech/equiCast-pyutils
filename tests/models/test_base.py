@@ -15,6 +15,10 @@ class DummyModel(ExportableModel):
     name: str
     value: int
 
+    @property
+    def is_empty(self) -> bool:
+        return not self.name or self.value is None
+
     def _to_dataframe(self) -> pd.DataFrame:
         return pd.DataFrame([{"name": self.name, "value": self.value}])
 
@@ -53,3 +57,12 @@ def test_to_parquet_file(dummy_model):
         df = pd.read_parquet(filepath)
         assert df.iloc[0]["name"] == "test"
         assert df.iloc[0]["value"] == 42
+
+
+def test_is_empty_false(dummy_model):
+    assert dummy_model.is_empty is False
+
+
+def test_is_empty_true():
+    model = DummyModel(name="", value=None)
+    assert model.is_empty is True

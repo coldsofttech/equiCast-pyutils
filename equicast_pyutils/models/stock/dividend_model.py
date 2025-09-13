@@ -16,6 +16,11 @@ class DividendModel(ExportableModel):
         default_factory=lambda: {"lastUpdated": datetime.now().isoformat()}
     )
 
+    @property
+    def is_empty(self) -> bool:
+        """Check if the model is empty."""
+        return len(self.prices) == 0
+
     def add_price(self, date: str, rate: float):
         """Add or update a stock price for a given date."""
         try:
@@ -32,3 +37,9 @@ class DividendModel(ExportableModel):
         df.insert(0, "ticker", self.ticker)
         df.insert(1, "currency", self.currency)
         return df
+
+    def to_parquet(self, filepath: str):
+        """Export dividends to a parquet file."""
+        df = self._to_dataframe()
+        if not df.empty:
+            df.to_parquet(filepath, index=False)
