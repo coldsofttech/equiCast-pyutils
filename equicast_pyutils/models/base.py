@@ -8,6 +8,11 @@ import pandas as pd
 class ExportableModel:
     """Base class to provide JSON and Parquet export capabilities."""
 
+    @property
+    def is_empty(self) -> bool:
+        """Check if the model is empty (must be implemented by subclass)."""
+        raise NotImplementedError("Subclassess must implement is_empty.")
+
     def to_json(self, filepath: str = None, indent: int = 4) -> str:
         """Export object to JSON string or file."""
         data = asdict(self)
