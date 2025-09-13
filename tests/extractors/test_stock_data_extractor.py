@@ -33,6 +33,18 @@ class EmptyTicker:
         return pd.DataFrame()
 
 
+class QuoteNoneTicker:
+    def __init__(self, ticker):
+        self.ticker = ticker
+        self.info = {"currency": "USD", "quoteType": "NONE"}
+
+    def history(self, period="1y", interval="1d"):
+        return pd.DataFrame({
+            "Close": [10.0],
+            "Adj Close": [10.0]
+        }, index=pd.to_datetime(["2023-09-01"]))
+
+
 @pytest.fixture
 def patch_yf_ticker(monkeypatch):
     monkeypatch.setattr("yfinance.Ticker", MockTicker)
@@ -60,6 +72,7 @@ def test_get_history_with_fallback(patch_yf_ticker):
     assert not history.empty
     assert "Close" in history.columns
     assert len(history) == 3
+    assert extractor.is_delisted is False
 
 
 def test_extract_stock_price_returns_model(monkeypatch, patch_yf_ticker):
@@ -82,6 +95,28 @@ def test_extract_stock_price_returns_model(monkeypatch, patch_yf_ticker):
     for date_str, price in model.prices.items():
         datetime.strptime(date_str, "%Y-%m-%d")
         assert isinstance(price, float)
+
+    assert extractor.is_delisted is False
+
+
+def test_no_data_found_sets_delisted(monkeypatch):
+    monkeypatch.setattr("yfinance.Ticker", EmptyTicker)
+    extractor = StockDataExtractor(ticker="AAPL")
+
+    _get_history_fn = StockDataExtractor._get_history.__wrapped__
+    with pytest.raises(ValueError, match="No historical data found"):
+        _get_history_fn(extractor, period="1y")
+
+    assert extractor.is_delisted is True
+
+
+def test_explicit_quoteType_none_sets_delisted(monkeypatch):
+    monkeypatch.setattr("yfinance.Ticker", QuoteNoneTicker)
+
+    extractor = StockDataExtractor(ticker="XYZ")
+    extractor._yf_obj = QuoteNoneTicker("XYZ")
+    extractor._check_delisted(info=extractor._yf_obj.info)
+    assert extractor.is_delisted is True
 
 
 def test_no_data_found_raises_without_retry(monkeypatch):

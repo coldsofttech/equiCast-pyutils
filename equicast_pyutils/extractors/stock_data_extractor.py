@@ -14,6 +14,11 @@ class StockDataExtractor:
     """Stock Data Extractor"""
     ticker: str
     _yf_obj: yf.Ticker = field(default=None, init=False, repr=False)
+    _is_delisted: bool = field(default=False, init=False)
+
+    @property
+    def is_delisted(self):
+        return self._is_delisted
 
     @property
     def yf_obj(self):
@@ -24,6 +29,31 @@ class StockDataExtractor:
             except Exception as e:
                 raise ValueError(f"Failed to create yfinance object for {self.ticker}: {e}")
         return self._yf_obj
+
+    def _check_delisted(self, info=None, history=None):
+        try:
+            if info is None:
+                info = self._yf_obj.info if self._yf_obj else {}
+            if history is None and self._yf_obj:
+                history = self._yf_obj.history(period="1y")
+
+            is_delisted = False
+
+            # Case 1: Empty info
+            if not info or len(info) < 5:
+                is_delisted = True
+
+            # Case 2: No price history at all
+            if history is not None and history.empty:
+                is_delisted = True
+
+            # Case 3: Explicit signal
+            if info.get("quoteType", "").lower() == "none":
+                is_delisted = True
+
+            self._is_delisted = is_delisted
+        except Exception:
+            self._is_delisted = True
 
     def _safe_get(self, info, key, default=None):
         try:
@@ -45,7 +75,9 @@ class StockDataExtractor:
                 break
 
         if data.empty:
+            self._check_delisted(history=data)
             raise ValueError("No historical data found for the specified ticker.")
+
         return data
 
     @retry(delay=2)
@@ -62,6 +94,8 @@ class StockDataExtractor:
 
         if not info or len(info) < 5:
             raise ValueError("No info found for the specified ticker.")
+
+        self._check_delisted(info=info)
         return info
 
     def extract_stock_price_data(self) -> StockPriceModel:
@@ -87,4 +121,4 @@ class StockDataExtractor:
             ticker=self.ticker,
             prices=prices_dict,
             currency=currency
-        ) if len(prices_dict) > 0 else None
+        )

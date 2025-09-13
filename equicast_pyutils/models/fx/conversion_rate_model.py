@@ -17,6 +17,11 @@ class FxConversionRateModel(ExportableModel):
         default_factory=lambda: {"lastUpdated": datetime.now().isoformat()}
     )
 
+    @property
+    def is_empty(self) -> bool:
+        """Check if the model is empty."""
+        return len(self.rates) == 0
+
     def add_rate(self, date: str, rate: float):
         """Add or update a conversion rate for a given date."""
         try:
@@ -34,3 +39,9 @@ class FxConversionRateModel(ExportableModel):
         df.insert(1, "from", self.from_currency)
         df.insert(2, "to", self.to_currency)
         return df
+
+    def to_parquet(self, filepath: str):
+        """Export FX rates to a parquet file."""
+        df = self._to_dataframe()
+        if not df.empty:
+            df.to_parquet(filepath, index=False)

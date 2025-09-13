@@ -25,14 +25,16 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install build twine
-          pip install --target=equicast_pyutils/_vendor -r requirements.txt
+          pip install -r requirements-dev.txt
+          pip install -r requirements.txt
 
       - name: Build Package
         run: python -m build
 
       - name: Estimate CodeArtifact Storage Cost
         id: cost
-        run: python scripts/calculate_codeartifact_cost.py
+        run: |
+          python scripts/calculate_codeartifact_cost.py
 
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -44,51 +46,20 @@ jobs:
       - name: Get CodeArtifact Auth Token
         id: codeartifact
         run: |
-          TOKEN=$(aws codeartifact get-authorization-token \
-            --domain "${{ secrets.PYUTILS_CODEARTIFACT_DOMAIN }}" \
-            --domain-owner "${{ secrets.PYUTILS_CODEARTIFACT_OWNER }}" \
-            --query authorizationToken --output text)
-          ENDPOINT=$(aws codeartifact get-repository-endpoint \
+          python scripts/get_codeartifact_auth_token.py \
             --domain "${{ secrets.PYUTILS_CODEARTIFACT_DOMAIN }}" \
             --domain-owner "${{ secrets.PYUTILS_CODEARTIFACT_OWNER }}" \
             --repository "${{ secrets.PYUTILS_CODEARTIFACT_REPO }}" \
-            --format pypi \
-            --query repositoryEndpoint --output text)
-          echo "token=$TOKEN" >> "$GITHUB_OUTPUT"
-          echo "endpoint=$ENDPOINT" >> "$GITHUB_OUTPUT"
 
       - name: Delete Older Versions from CodeArtifact
         env:
           TOKEN: ${{ steps.codeartifact.outputs.token }}
         run: |
-          PACKAGE_NAME="equicast-pyutils"
-          DOMAIN="${{ secrets.PYUTILS_CODEARTIFACT_DOMAIN }}"
-          REPO="${{ secrets.PYUTILS_CODEARTIFACT_REPO }}"
-          OWNER="${{ secrets.PYUTILS_CODEARTIFACT_OWNER }}"
-
-          VERSIONS=$(aws codeartifact list-package-versions \
-            --domain "$DOMAIN" \
-            --domain-owner "$OWNER" \
-            --repository "$REPO" \
-            --format pypi \
-            --package "$PACKAGE_NAME" \
-            --query 'versions[*].version' \
-            --output text)
-
-          if [ -n "$VERSIONS" ]; then
-            echo "Deleting existing versions: $VERSIONS"
-            for VERSION in $VERSIONS; do
-              aws codeartifact delete-package-versions \
-                --domain "$DOMAIN" \
-                --domain-owner "$OWNER" \
-                --repository "$REPO" \
-                --format pypi \
-                --package "$PACKAGE_NAME" \
-                --versions "$VERSION"
-            done
-          else
-            echo "No existing versions found."
-          fi
+          python scripts/delete_codeartifact_package_versions.py \
+            --domain "${{ secrets.PYUTILS_CODEARTIFACT_DOMAIN }}" \
+            --domain-owner "${{ secrets.PYUTILS_CODEARTIFACT_OWNER }}" \
+            --repository "${{ secrets.PYUTILS_CODEARTIFACT_REPO }}" \
+            --package-name "equicast-pyutils"
 
       - name: Publish to CodeArtifact
         env:
@@ -101,8 +72,6 @@ jobs:
         env:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
-          aws ssm put-parameter \
-            --name "/equicast/pyutils/version" \
-            --value "$RELEASE_TAG" \
-            --type "String" \
-            --overwrite
+          python scripts/store_ssm_parameter.py \
+            --name "${{ secrets.PYUTILS_VERSION_SSM_PARAMETER }}" \
+            --value "$RELEASE_TAG"

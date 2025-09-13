@@ -16,6 +16,13 @@ def fx_model():
     return model
 
 
+def test_is_empty_property():
+    model = FxConversionRateModel(pair="USDGBP", from_currency="USD", to_currency="GBP")
+    assert model.is_empty is True
+    model.add_rate("2025-01-01", 0.78)
+    assert model.is_empty is False
+
+
 def test_to_json_string(fx_model):
     json_str = fx_model.to_json()
     data = json.loads(json_str)
@@ -47,6 +54,25 @@ def test_to_parquet_file(fx_model):
         row = df[df["date"] == "2025-01-01"].iloc[0]
         assert row["pair"] == "USDGBP"
         assert row["rate"] == 0.78
+
+
+def test_to_parquet_file_empty_model():
+    model = FxConversionRateModel(pair="USDGBP", from_currency="USD", to_currency="GBP")
+    assert model.is_empty
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        filepath = os.path.join(tmpdir, "fx.parquet")
+        model.to_parquet(filepath)
+
+        assert not os.path.exists(filepath)
+
+
+def test_add_rate_valid_date_updates_metadata(fx_model):
+    before_update = fx_model.metadata["lastUpdated"]
+    fx_model.add_rate("2025-01-03", 0.80)
+    assert fx_model.rates["2025-01-03"] == 0.80
+    assert "lastUpdated" in fx_model.metadata
+    assert fx_model.metadata["lastUpdated"] != before_update
 
 
 def test_add_rate_valid_date(fx_model):
