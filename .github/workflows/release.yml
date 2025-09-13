@@ -56,7 +56,8 @@ jobs:
       - name: Install AWS Utils
         run: |
           PACKAGE="equicast-awsutils"
-          pip install "$PACKAGE==$AWSUTILS_VERSION" --index-url $PIP_INDEX_URL
+          VERSION="${AWSUTILS_VERSION#v}"
+          pip install "$PACKAGE==$VERSION" --index-url $PIP_INDEX_URL
 
       - name: Estimate CodeArtifact Storage Cost
         id: cost
