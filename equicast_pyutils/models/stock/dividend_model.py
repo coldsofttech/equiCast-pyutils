@@ -22,7 +22,7 @@ class DividendModel(ExportableModel):
         return len(self.prices) == 0
 
     def add_price(self, date: str, rate: float):
-        """Add or update a stock price for a given date."""
+        """Add or update a dividend price for a given date."""
         try:
             datetime.strptime(date, "%Y-%m-%d")  # Enforce ISO date format
         except ValueError:
@@ -31,7 +31,7 @@ class DividendModel(ExportableModel):
         self.metadata["lastUpdated"] = datetime.now().isoformat()
 
     def _to_dataframe(self) -> pd.DataFrame:
-        """Convert stock prices into a pandas DataFrame for export."""
+        """Convert dividends into a pandas DataFrame for export."""
         rows = [{"date": d, "price": p} for d, p in self.prices.items()]
         df = pd.DataFrame(rows)
         df.insert(0, "ticker", self.ticker)

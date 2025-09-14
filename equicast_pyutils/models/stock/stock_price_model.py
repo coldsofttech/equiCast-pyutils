@@ -39,7 +39,7 @@ class StockPriceModel(ExportableModel):
         return df
 
     def to_parquet(self, filepath: str):
-        """Export Stock prices to a parquet file."""
+        """Export stock prices to a parquet file."""
         df = self._to_dataframe()
         if not df.empty:
             df.to_parquet(filepath, index=False)
