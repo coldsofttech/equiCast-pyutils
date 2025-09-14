@@ -1,12 +1,15 @@
+import math
 import random
+import re
 import time
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 
 import yfinance as yf
 
 from equicast_pyutils.extractors.retry import retry
-from equicast_pyutils.models.stock import StockPriceModel
-from equicast_pyutils.models.stock.dividend_model import DividendModel
+from equicast_pyutils.models.stock import StockPriceModel, CompanyProfileModel, CompanyAddressModel, DividendModel, \
+    CompanyOfficerModel
 
 
 @dataclass
@@ -58,6 +61,24 @@ class StockDataExtractor:
     def _safe_get(self, info, key, default=None):
         try:
             return info.get(key, default)
+        except Exception:
+            return default
+
+    def _safe_float(self, val, default: float = 0.0):
+        try:
+            val = float(val)
+            if math.isnan(val) or math.isinf(val):
+                return default
+            return val
+        except Exception:
+            return default
+
+    def _safe_int(self, val, default: int = 0):
+        try:
+            val = int(val)
+            if math.isnan(val) or math.isinf(val):
+                return default
+            return val
         except Exception:
             return default
 
@@ -122,3 +143,100 @@ class StockDataExtractor:
             prices=prices_dict,
             currency=currency
         )
+
+    def _extract_company_address(self, info=None):
+        if info is None:
+            info = self._get_info()
+
+        model = CompanyAddressModel()
+        model.address1 = self._safe_get(info, "address1", "")
+        model.address2 = self._safe_get(info, "address2", "")
+        model.city = self._safe_get(info, "city", "")
+        model.state = self._safe_get(info, "state", "")
+        model.zip = self._safe_get(info, "zip", "")
+        model.country = self._safe_get(info, "country", "")
+        model.region = self._safe_get(info, "region", "")
+
+        return model
+
+    def _get_ceos(self, info=None):
+        if info is None:
+            info = self._get_info()
+
+        ceos = []
+        seen_names = set()
+
+        # 1. From companyOfficers
+        officers = self._safe_get(info, "companyOfficers", [])
+        for officer in officers:
+            title = self._safe_get(officer, "title", "")
+            if "ceo" in title.lower() or "chief executive officer" in title.lower():
+                name = self._safe_get(officer, "name", "").strip()
+                if name and name not in seen_names:
+                    model = CompanyOfficerModel()
+                    model.name, model.title = name, title
+                    ceos.append(model)
+                    seen_names.add(name)
+
+        # 2. From executiveTeam
+        exec_teams = self._safe_get(info, "executiveTeam", [])
+        for exec_team in exec_teams:
+            title = self._safe_get(exec_team, "title", "")
+            if "ceo" in title.lower() or "chief executive officer" in title.lower():
+                name = self._safe_get(exec_team, "name", "").strip()
+                if name and name not in seen_names:
+                    model = CompanyOfficerModel()
+                    model.name, model.title = name, title
+                    ceos.append(model)
+                    seen_names.add(name)
+
+        # 3. Fallback: from longBusinessSummary if both companyOfficers and executiveTeam is empty
+        if not ceos:
+            summary = self._safe_get(info, "longBusinessSummary", "")
+            matches = re.findall(r'CEO\s*[:\-]?\s*([\w\s]+)', summary, re.I)
+            matches += re.findall(r'Chief Executive Officer\s*[:\-]?\s*([\w\s]+)', summary, re.I)
+            for m in matches:
+                name = m.strip()
+                if name and name not in seen_names:
+                    model = CompanyOfficerModel()
+                    model.name, model.title = name, "CEO"
+                    ceos.append(model)
+                    seen_names.add(name)
+
+        return ceos
+
+    def extract_company_profile(self):
+        info = self._get_info()
+        model = CompanyProfileModel(ticker=self.ticker)
+        model.name = self._safe_get(info, "longName", "")
+        model.quote_type = self._safe_get(info, "quoteType", "").upper()
+        model.exchange = self._safe_get(info, "exchange", "")
+        model.currency = self._safe_get(info, "currency", "")
+        model.description = self._safe_get(info, "longBusinessSummary", "")
+        model.sector = (
+            self._safe_get(info, "sector", "")
+            if model.quote_type.lower() == "equity" else model.quote_type
+        )
+        model.industry = (
+            self._safe_get(info, "industry", "")
+            if model.quote_type.lower() == "equity" else model.quote_type
+        )
+        model.website = self._safe_get(info, "website", "")
+        model.beta = self._safe_float(self._safe_get(info, "beta", ""))
+        model.payout_ratio = self._safe_float(self._safe_get(info, "payoutRatio", ""))
+        model.dividend_rate = self._safe_float(self._safe_get(info, "dividendRate", ""))
+        model.dividend_yield = self._safe_float(self._safe_get(info, "dividendYield", ""))
+        model.volume = self._safe_int(self._safe_get(info, "volume", ""))
+        model.market_cap = (
+            self._safe_int(self._safe_get(info, "totalAssets", ""))
+            if model.quote_type == "ETF" else self._safe_int(self._safe_get(info, "marketCap", ""))
+        )
+        model.address = self._extract_company_address(info=info)
+        model.full_time_employees = self._safe_int(self._safe_get(info, "fullTimeEmployees", ""))
+        model.ceos = self._get_ceos(info=info)
+        model.ipo_date = (
+            datetime.fromtimestamp(ipo_ts_ms / 1000, tz=timezone.utc).replace(tzinfo=None)
+            if (ipo_ts_ms := self._safe_get(info, "firstTradeDateMilliseconds", None)) else None
+        )
+
+        return model
