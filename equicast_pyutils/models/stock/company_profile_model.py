@@ -80,6 +80,7 @@ class CompanyProfileModel(ExportableModel):
     full_time_employees: int = field(default=None, init=False)
     ceos: List[CompanyOfficerModel] = field(default=None, init=False)
     ipo_date: datetime = field(default=None, init=False)
+    fund_family: str = field(default=None, init=False)
     metadata: Dict[str, str] = field(
         default_factory=lambda: {"lastUpdated": datetime.now().isoformat()}
     )
@@ -110,7 +111,7 @@ class CompanyProfileModel(ExportableModel):
         return result
 
     def _to_dataframe(self) -> pd.DataFrame:
-        """Convert stock prices into a pandas DataFrame for export."""
+        """Convert company profile into a pandas DataFrame for export."""
         data = asdict(self)
         data["metadata"] = json.dumps(data["metadata"])
         data["ceos"] = json.dumps(data["ceos"])
@@ -121,7 +122,7 @@ class CompanyProfileModel(ExportableModel):
         return df
 
     def to_parquet(self, filepath: str):
-        """Export dividends to a parquet file."""
+        """Export company profile to a parquet file."""
         df = self._to_dataframe()
         if not df.empty:
             df.to_parquet(filepath, index=False)

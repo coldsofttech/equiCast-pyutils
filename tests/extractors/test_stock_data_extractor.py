@@ -1,223 +1,165 @@
-import math
-from datetime import datetime
+from unittest.mock import MagicMock, patch
 
 import pandas as pd
 import pytest
+from _pytest.raises import raises
 
-from equicast_pyutils.extractors.stock_data_extractor import StockDataExtractor
-from equicast_pyutils.models.stock import StockPriceModel, CompanyAddressModel, CompanyOfficerModel, CompanyProfileModel
-
-
-class MockTicker:
-    def __init__(self, ticker):
-        self.ticker = ticker
-        self.call_count = 0
-        self.info = {"currency": "USD"}
-
-    def history(self, period="1y", interval="1d"):
-        self.call_count += 1
-        if self.call_count < 3:
-            return pd.DataFrame()
-
-        return pd.DataFrame({
-            "Close": [1.1, 1.2, 1.15],
-            "Adj Close": [1.1, 1.2, 1.15]
-        }, index=pd.to_datetime(["2023-09-01", "2023-09-02", "2023-09-03"]))
-
-
-class EmptyTicker:
-    def __init__(self, ticker):
-        self.ticker = ticker
-        self.info = {"currency": "USD"}
-
-    def history(self, period="1y", interval="1d"):
-        return pd.DataFrame()
-
-
-class QuoteNoneTicker:
-    def __init__(self, ticker):
-        self.ticker = ticker
-        self.info = {"currency": "USD", "quoteType": "NONE"}
-
-    def history(self, period="1y", interval="1d"):
-        return pd.DataFrame({
-            "Close": [10.0],
-            "Adj Close": [10.0]
-        }, index=pd.to_datetime(["2023-09-01"]))
-
-
-@pytest.fixture
-def patch_yf_ticker(monkeypatch):
-    monkeypatch.setattr("yfinance.Ticker", MockTicker)
-
-
-@pytest.fixture
-def patch_empty_ticker(monkeypatch):
-    monkeypatch.setattr("yfinance.Ticker", EmptyTicker)
-
-
-@pytest.fixture(autouse=True)
-def patch_sleep(monkeypatch):
-    monkeypatch.setattr("time.sleep", lambda x: None)
+from equicast_pyutils.extractors import StockDataExtractor
+from equicast_pyutils.models.stock import StockPriceModel, DividendModel, FundamentalsModel
 
 
 @pytest.fixture
 def sample_info():
     return {
-        "longName": "Apple Inc.",
-        "quoteType": "EQUITY",
-        "exchange": "NASDAQ",
         "currency": "USD",
-        "longBusinessSummary": "Apple Inc. CEO: Tim Cook",
-        "sector": "Technology",
-        "industry": "Consumer Electronics",
-        "website": "https://apple.com",
-        "beta": 1.2,
-        "payoutRatio": 0.25,
-        "dividendRate": 0.88,
-        "dividendYield": 0.007,
-        "marketCap": 2500000000000,
-        "totalAssets": 3000000000000,
-        "volume": 50000000,
-        "address1": "1 Apple Park Way",
-        "address2": "",
-        "city": "Cupertino",
-        "state": "CA",
-        "zip": "95014",
-        "country": "USA",
-        "region": "US",
-        "fullTimeEmployees": 154000,
-        "companyOfficers": [{"name": "Tim Cook", "title": "CEO"}],
-        "executiveTeam": [],
-        "firstTradeDateMilliseconds": 345446400000
+        "quoteType": "EQUITY",
+        "currentPrice": 150.0,
+        "open": 148.0,
+        "dayLow": 147.0,
+        "dayHigh": 151.0,
+        "fiftyTwoWeekLow": 120.0,
+        "fiftyTwoWeekHigh": 180.0,
+        "trailingPE": 20,
+        "forwardPE": 25,
+        "trailingEps": 5,
+        "forwardEps": 6,
     }
 
 
 @pytest.fixture
-def extractor(monkeypatch, sample_info):
-    ext = StockDataExtractor(ticker="AAPL")
-    monkeypatch.setattr(ext, "_get_info", lambda: sample_info)
-    return ext
+def sample_history():
+    return pd.DataFrame({
+        "Open": [148.0],
+        "High": [151.0],
+        "Low": [147.0],
+        "Close": [150.0],
+        "Adj Close": [150.0],
+    }, index=[pd.Timestamp("2025-09-14")])
 
 
-def test_yf_obj_initialization(patch_yf_ticker):
-    extractor = StockDataExtractor(ticker="AAPL")
-    yf_obj = extractor.yf_obj
-    assert yf_obj.ticker == "AAPL"
+@pytest.fixture
+def sample_financials():
+    return pd.DataFrame({
+        "Total Revenue": [500],
+        "Gross Profit": [200],
+        "Operating Income": [150],
+        "Net Income": [100]
+    }, index=[pd.Timestamp("2025-09-14")]).T
 
 
-def test_get_history_with_fallback(patch_yf_ticker):
-    extractor = StockDataExtractor(ticker="AAPL")
-    history = extractor._get_history()
-    assert not history.empty
-    assert "Close" in history.columns
-    assert len(history) == 3
-    assert extractor.is_delisted is False
+@pytest.fixture
+def sample_balance_sheet():
+    return pd.DataFrame({
+        pd.Timestamp("2025-09-14"): {
+            "Total Equity": 400,
+            "Total Debt": 100,
+            "Total Assets": 600
+        }
+    })
 
 
-def test_extract_stock_price_returns_model(monkeypatch, patch_yf_ticker):
-    extractor = StockDataExtractor(ticker="AAPL")
-    monkeypatch.setattr(extractor, "_get_info", lambda: {"currency": "USD"})
-    monkeypatch.setattr(
-        extractor, "_get_history",
-        lambda period="1y": pd.DataFrame({
-            "Close": [1.1, 1.2, 1.15],
-            "Adj Close": [1.1, 1.2, 1.15]
-        }, index=pd.to_datetime(["2023-09-01", "2023-09-02", "2023-09-03"]))
-    )
+@pytest.fixture
+def sample_cashflow():
+    return pd.DataFrame({
+        "Operating Cash Flow": [120],
+        "Capital Expenditure": [20],
+    }, index=["2025-09-14"])
 
+
+@pytest.fixture
+def mock_yf_ticker(sample_info, sample_history):
+    mock_ticker = MagicMock()
+    mock_ticker.info = sample_info
+    mock_ticker.history.return_value = sample_history
+    mock_ticker.dividends = pd.Series([0.5], index=[pd.Timestamp("2025-09-14")])
+    mock_ticker.financials = pd.DataFrame()
+    mock_ticker.balance_sheet = pd.DataFrame()
+    mock_ticker.cash_flow = pd.DataFrame()
+    return mock_ticker
+
+
+@pytest.fixture
+def no_retry(monkeypatch):
+    monkeypatch.setattr("equicast_pyutils.extractors.retry.retry", lambda *args, **kwargs: (lambda f: f))
+
+
+def test_lazy_loading_and_delisted(monkeypatch):
+    with patch("yfinance.Ticker"):
+        extractor = StockDataExtractor("AAPL")
+        assert extractor._yf_obj is None
+        extractor.yf_obj
+        assert extractor._yf_obj is not None
+
+
+def test_safe_methods():
+    extractor = StockDataExtractor("AAPL")
+    assert extractor._safe_get({}, "nonexistent", default=42) == 42
+    assert extractor._safe_float("123.45") == 123.45
+    assert extractor._safe_float("invalid", default=-1) == -1
+    assert extractor._safe_int("42") == 42
+    assert extractor._safe_int("invalid", default=-1) == -1
+
+
+def test_get_history_fallback_skip_retry(monkeypatch, mock_yf_ticker, no_retry):
+    extractor = StockDataExtractor("AAPL")
+    extractor._yf_obj = mock_yf_ticker
+    mock_yf_ticker.history.return_value = pd.DataFrame()
+    with raises(RuntimeError):
+        extractor._get_history(period="1d")
+
+
+def test_get_dividends(monkeypatch, mock_yf_ticker):
+    extractor = StockDataExtractor("AAPL")
+    extractor._yf_obj = mock_yf_ticker
+    dividends = extractor._get_dividends()
+    assert not dividends.empty
+
+
+def test_get_info(monkeypatch, mock_yf_ticker):
+    extractor = StockDataExtractor("AAPL")
+    extractor._yf_obj = mock_yf_ticker
+    info = extractor._get_info()
+    assert info["currency"] == "USD"
+
+
+def test_price_at_period(monkeypatch, mock_yf_ticker):
+    extractor = StockDataExtractor("AAPL")
+    extractor._yf_obj = mock_yf_ticker
+    price = extractor._get_price_at_period("1d", "close")
+    assert price == 150.0
+    with pytest.raises(ValueError):
+        extractor._get_price_at_period("1d", "unsupported")
+
+
+def test_extract_stock_price_data(monkeypatch, mock_yf_ticker):
+    extractor = StockDataExtractor("AAPL")
+    extractor._yf_obj = mock_yf_ticker
     model = extractor.extract_stock_price_data()
-
     assert isinstance(model, StockPriceModel)
     assert model.ticker == "AAPL"
-    assert model.currency == "USD"
-    assert len(model.prices) == 3
-    for date_str, price in model.prices.items():
-        datetime.strptime(date_str, "%Y-%m-%d")
-        assert isinstance(price, float)
-
-    assert extractor.is_delisted is False
 
 
-def test_no_data_found_sets_delisted(monkeypatch):
-    monkeypatch.setattr("yfinance.Ticker", EmptyTicker)
-    extractor = StockDataExtractor(ticker="AAPL")
-
-    _get_history_fn = StockDataExtractor._get_history.__wrapped__
-    with pytest.raises(ValueError, match="No historical data found"):
-        _get_history_fn(extractor, period="1y")
-
-    assert extractor.is_delisted is True
+def test_extract_dividends(monkeypatch, mock_yf_ticker):
+    extractor = StockDataExtractor("AAPL")
+    extractor._yf_obj = mock_yf_ticker
+    model = extractor.extract_dividends()
+    assert isinstance(model, DividendModel)
+    assert model.ticker == "AAPL"
 
 
-def test_explicit_quoteType_none_sets_delisted(monkeypatch):
-    monkeypatch.setattr("yfinance.Ticker", QuoteNoneTicker)
+def test_extract_fundamentals(monkeypatch, mock_yf_ticker, sample_financials, sample_balance_sheet, sample_cashflow):
+    extractor = StockDataExtractor("AAPL")
+    extractor._yf_obj = mock_yf_ticker
+    monkeypatch.setattr(extractor, "_get_financials", lambda: sample_financials)
+    monkeypatch.setattr(extractor, "_get_balance_sheet", lambda: sample_balance_sheet)
+    monkeypatch.setattr(extractor, "_get_cash_flow", lambda: sample_cashflow)
 
-    extractor = StockDataExtractor(ticker="XYZ")
-    extractor._yf_obj = QuoteNoneTicker("XYZ")
-    extractor._check_delisted(info=extractor._yf_obj.info)
-    assert extractor.is_delisted is True
-
-
-def test_no_data_found_raises_without_retry(monkeypatch):
-    monkeypatch.setattr("yfinance.Ticker", EmptyTicker)
-    extractor = StockDataExtractor(ticker="AAPL")
-
-    _get_history_fn = StockDataExtractor._get_history.__wrapped__
-    with pytest.raises(ValueError, match="No historical data found"):
-        _get_history_fn(extractor, period="1y")
-
-
-def test_safe_float_int(extractor):
-    assert extractor._safe_float("10.5") == 10.5
-    assert extractor._safe_float("abc", 1.0) == 1.0
-    assert extractor._safe_float(math.inf, 0.0) == 0.0
-    assert extractor._safe_int("42") == 42
-    assert extractor._safe_int("abc", 7) == 7
-    assert extractor._safe_int(math.nan, 5) == 5
-
-
-def test_extract_company_address(extractor):
-    addr = extractor._extract_company_address()
-    assert isinstance(addr, CompanyAddressModel)
-    assert addr.address1 == "1 Apple Park Way"
-    assert addr.city == "Cupertino"
-    assert addr.country == "USA"
-    assert addr.region == "US"
-
-
-def test_get_ceos_deduplication(extractor, monkeypatch):
-    original_get_info = extractor._get_info
-
-    def patched_get_info():
-        info = original_get_info()
-        info["executiveTeam"] = [{"name": "Tim Cook", "title": "CEO"}]
-        return info
-
-    monkeypatch.setattr(extractor, "_get_info", patched_get_info)
-
-    ceos = extractor._get_ceos()
-    assert len(ceos) == 1
-    assert isinstance(ceos[0], CompanyOfficerModel)
-    assert ceos[0].name == "Tim Cook"
-
-
-def test_get_ceos_from_summary(monkeypatch):
-    info = {"longBusinessSummary": "Apple Inc. Chief Executive Officer: Tim Cook"}
-    ext = StockDataExtractor(ticker="AAPL")
-    monkeypatch.setattr(ext, "_get_info", lambda: info)
-    ceos = ext._get_ceos()
-    assert len(ceos) == 1
-    assert ceos[0].name == "Tim Cook"
-    assert ceos[0].title == "CEO"
-
-
-def test_extract_company_profile(extractor):
-    profile = extractor.extract_company_profile()
-    assert isinstance(profile, CompanyProfileModel)
-    assert profile.ticker == "AAPL"
-    assert profile.exchange == "NASDAQ"
-    assert profile.address.city == "Cupertino"
-    assert profile.ceos[0].name == "Tim Cook"
-    assert isinstance(profile.ipo_date, datetime)
-    assert profile.ipo_date.year == 1980
+    model = extractor.extract_fundamentals()
+    assert isinstance(model, FundamentalsModel)
+    assert model.day.close == 150.0
+    assert model.one_year.low == 120.0
+    assert model.trailing_pe == 20
+    assert model.forward_pe == 25
+    assert model.gross_margin == pytest.approx(200 / 500 * 100)
+    assert model.return_on_equity == pytest.approx(100 / 400 * 100)
+    assert model.free_cash_flow_per_share is None

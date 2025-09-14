@@ -9,7 +9,7 @@ import yfinance as yf
 
 from equicast_pyutils.extractors.retry import retry
 from equicast_pyutils.models.stock import StockPriceModel, CompanyProfileModel, CompanyAddressModel, DividendModel, \
-    CompanyOfficerModel
+    CompanyOfficerModel, FundamentalsModel, OHLCModel
 
 
 @dataclass
@@ -119,6 +119,57 @@ class StockDataExtractor:
         self._check_delisted(info=info)
         return info
 
+    @retry(delay=2)
+    def _get_financials(self):
+        time.sleep(random.uniform(0.1, 0.5))
+        financials = self.yf_obj.financials
+        if financials.empty:
+            financials = self.yf_obj.get_financials()
+
+        return financials
+
+    @retry(delay=2)
+    def _get_balance_sheet(self):
+        time.sleep(random.uniform(0.1, 0.5))
+        balance_sheet = self.yf_obj.balance_sheet
+        if balance_sheet.empty:
+            balance_sheet = self.yf_obj.get_balance_sheet()
+
+        return balance_sheet
+
+    @retry(delay=2)
+    def _get_cash_flow(self):
+        time.sleep(random.uniform(0.1, 0.5))
+        cash_flow = self.yf_obj.cash_flow
+        if cash_flow.empty:
+            cash_flow = self.yf_obj.get_cash_flow()
+
+        return cash_flow
+
+    def _get_price_at_period(self, period: str = "1d", parameter: str = "close"):
+        param_map = {
+            "close": ["Adj Close", "Close"],
+            "open": ["Open"],
+            "low": ["Low"],
+            "high": ["High"],
+        }
+
+        parameter = parameter.lower()
+        if parameter not in param_map:
+            raise ValueError(f"Unsupported parameter: {parameter}")
+
+        u_period = "5d" if period == "1d" else period
+        history = self._get_history(period=u_period)
+        if history.empty:
+            return None
+
+        first_row = history.iloc[-1] if period == "1d" else history.iloc[0]
+        for col in param_map[parameter]:
+            if col in history.columns:
+                return float(first_row[col])
+
+        return None
+
     def extract_stock_price_data(self) -> StockPriceModel:
         history = self._get_history(period="max")
         price_col = "Adj Close" if "Adj Close" in history.columns else "Close"
@@ -205,6 +256,285 @@ class StockDataExtractor:
 
         return ceos
 
+    def _get_peg(self, info, fundamentals: FundamentalsModel):
+        quote_type = self._safe_get(info, "quoteType", "").lower()
+        if quote_type in ["etf", "mutualfund"]:
+            return None
+
+        pe = fundamentals.forward_pe or fundamentals.trailing_pe
+        if not pe:
+            return None
+
+        # 1. Analyst growth
+        growth_rate = self._safe_float(self._safe_get(info, "earningsQuarterlyGrowth", ""))
+        if growth_rate and 0 < growth_rate < 1:
+            growth_rate = (1 + growth_rate) ** 4 - 1
+
+        # 2. Fallback: estimate from Revenue Growth
+        if not growth_rate:
+            growth_rate = self._safe_float(self._safe_get(info, "revenueGrowth", ""))
+            if growth_rate and 0 < growth_rate < 1:
+                growth_rate = (1 + growth_rate) ** 4 - 1
+
+        # 3. Final fallback: no growth info > PEG invalid
+        if not growth_rate or growth_rate <= 0:
+            return None
+
+        return pe / growth_rate
+
+    def _get_price_to_book(self, info):
+        quote_type = self._safe_get(info, "quoteType", "").lower()
+        if quote_type in ["etf", "mutualfund"]:
+            return None
+
+        pb = self._safe_float(self._safe_get(info, "priceToBook", ""))
+        if pb is not None:
+            return pb
+
+        # Fallback
+        market_cap = self._safe_int(self._safe_get(info, "marketCap", ""))
+        book_value = self._safe_float(self._safe_get(info, "bookValue", ""))
+        shares_outstanding = self._safe_int(self._safe_get(info, "shareOutstanding", ""))
+        if market_cap and book_value and shares_outstanding:
+            total_equity = book_value * shares_outstanding
+            if total_equity > 0:
+                return market_cap / total_equity
+
+        return None
+
+    def _get_price_to_sales(self, info):
+        quote_type = self._safe_get(info, "quoteType", "").lower()
+        if quote_type in ["etf", "mutualfund"]:
+            return None
+
+        ps = self._safe_float(self._safe_get(info, "priceToSalesTrailing12Months", ""))
+        if ps is not None:
+            return ps
+
+        # Fallback
+        market_cap = self._safe_int(self._safe_get(info, "marketCap", ""))
+        total_revenue = self._safe_int(self._safe_get(info, "totalRevenue", ""))
+        if market_cap and total_revenue and total_revenue > 0:
+            return market_cap / total_revenue
+
+        return None
+
+    def _get_ev_ebitda(self, info):
+        quote_type = self._safe_get(info, "quoteType", "").lower()
+        if quote_type in ["etf", "mutualfund"]:
+            return None
+
+        market_cap = self._safe_int(self._safe_get(info, "marketCap", ""))
+        total_debt = self._safe_int(self._safe_get(info, "totalDebt", "")) or 0
+        total_cash = (
+                self._safe_int(self._safe_get(info, "totalCash", "")) or
+                self._safe_int(self._safe_get(info, "cash", "")) or 0
+        )
+        ebitda = self._safe_int(self._safe_get(info, "ebitda", ""))
+
+        if not market_cap or not ebitda:
+            return None
+
+        ev = market_cap + total_debt - total_cash
+        if ebitda == 0:
+            return None
+
+        return ev / ebitda
+
+    def _get_gross_margin(self, info, financials):
+        quote_type = self._safe_get(info, "quoteType", "").lower()
+        if quote_type in ["etf", "mutualfund"]:
+            return None
+
+        gross_margin = self._safe_float(self._safe_get(info, "grossMargins", ""))
+        if gross_margin:
+            return gross_margin * 100
+
+        # Fallback
+        if financials.empty:
+            return None
+
+        latest = financials.iloc[:, 0]
+        revenue = (
+                self._safe_float(self._safe_get(latest, "Total Revenue", "")) or
+                self._safe_float(self._safe_get(latest, "Revenue", "")) or
+                self._safe_float(self._safe_get(latest, "Sales", ""))
+        )
+        gross_profit = self._safe_float(self._safe_get(latest, "Gross Profit", ""))
+
+        if gross_profit is not None and revenue:
+            return (gross_profit / revenue) * 100
+
+        return None
+
+    def _get_operating_margin(self, info, financials):
+        quote_type = self._safe_get(info, "quoteType", "").lower()
+        if quote_type in ["etf", "mutualfund"]:
+            return None
+
+        operating_margin = self._safe_float(self._safe_get(info, "operatingMargins", ""))
+        if operating_margin:
+            return operating_margin * 100
+
+        # Fallback
+        if financials.empty:
+            return None
+
+        latest = financials.iloc[:, 0]
+        revenue = (
+                self._safe_float(self._safe_get(latest, "Total Revenue", "")) or
+                self._safe_float(self._safe_get(latest, "Revenue", "")) or
+                self._safe_float(self._safe_get(latest, "Sales", ""))
+        )
+        operating_income = (
+                self._safe_float(self._safe_get(latest, "Operating Income", "")) or
+                self._safe_float(self._safe_get(latest, "Operating Profit", ""))
+        )
+
+        if operating_income is not None and revenue:
+            return (operating_income / revenue) * 100
+
+        return None
+
+    def _get_profit_margin(self, info, financials):
+        quote_type = self._safe_get(info, "quoteType", "").lower()
+        if quote_type in ["etf", "mutualfund"]:
+            return None
+
+        profit_margin = self._safe_float(self._safe_get(info, "profitMargins", ""))
+        if profit_margin:
+            return profit_margin * 100
+
+        # Fallback
+        if financials.empty:
+            return None
+
+        latest = financials.iloc[:, 0]
+        revenue = (
+                self._safe_float(self._safe_get(latest, "Total Revenue", "")) or
+                self._safe_float(self._safe_get(latest, "Revenue", "")) or
+                self._safe_float(self._safe_get(latest, "Sales", ""))
+        )
+        net_income = (
+                self._safe_float(self._safe_get(latest, "Net Income", "")) or
+                self._safe_float(self._safe_get(latest, "Net Income Applicable To Common Shares", ""))
+        )
+
+        if net_income is not None and revenue:
+            return (net_income / revenue) * 100
+
+        return None
+
+    def _get_return_on_equity(self, info, financials, balance_sheet):
+        quote_type = self._safe_get(info, "quoteType", "").lower()
+        if quote_type in ["etf", "mutualfund"]:
+            return None
+
+        roe = self._safe_float(self._safe_get(info, "returnOnEquity", ""))
+        if roe:
+            return roe * 100
+
+        # Fallback
+        if financials.empty or balance_sheet.empty:
+            return None
+
+        latest_fin = financials.iloc[:, 0]
+        latest_bs = balance_sheet.iloc[:, 0]
+        net_income = (
+                self._safe_float(self._safe_get(latest_fin, "Net Income", "")) or
+                self._safe_float(self._safe_get(latest_fin, "NetIncome", ""))
+        )
+        shareholder_equity = (
+                self._safe_float(self._safe_get(latest_bs, "Stockholders Equity", "")) or
+                self._safe_float(self._safe_get(latest_bs, "Total Stockholder Equity", "")) or
+                self._safe_float(self._safe_get(latest_bs, "Total Equity", ""))
+        )
+
+        if net_income is not None and shareholder_equity:
+            return (net_income / shareholder_equity) * 100
+
+        return None
+
+    def _get_return_on_assets(self, info, financials, balance_sheet):
+        quote_type = self._safe_get(info, "quoteType", "").lower()
+        if quote_type in ["etf", "mutualfund"]:
+            return None
+
+        roa = self._safe_float(self._safe_get(info, "returnOnAssets", ""))
+        if roa:
+            return roa * 100
+
+        # Fallback
+        if financials.empty or balance_sheet.empty:
+            return None
+
+        latest_fin = financials.iloc[:, 0]
+        latest_bs = balance_sheet.iloc[:, 0]
+        net_income = (
+                self._safe_float(self._safe_get(latest_fin, "Net Income", "")) or
+                self._safe_float(self._safe_get(latest_fin, "NetIncome", ""))
+        )
+        total_assets = self._safe_float(self._safe_get(latest_bs, "Total Assets", ""))
+
+        if net_income is not None and total_assets:
+            return (net_income / total_assets) * 100
+
+        return None
+
+    def _get_debt_to_equity(self, info, balance_sheet):
+        quote_type = self._safe_get(info, "quoteType", "").lower()
+        if quote_type in ["etf", "mutualfund"]:
+            return None
+
+        de_ratio = self._safe_float(self._safe_get(info, "debtToEquity", ""))
+        if de_ratio:
+            return de_ratio
+
+        # Fallback
+        if balance_sheet.empty:
+            return None
+
+        latest = balance_sheet.iloc[:, 0]
+        shareholder_equity = (
+                self._safe_float(self._safe_get(latest, "Stockholders Equity", "")) or
+                self._safe_float(self._safe_get(latest, "Total Stockholder Equity", "")) or
+                self._safe_float(self._safe_get(latest, "Total Equity", ""))
+        )
+        total_debt = (
+                self._safe_float(self._safe_get(latest, "Total Debt", "")) or
+                self._safe_float(self._safe_get(latest, "Short Long Term Debt", ""))
+        )
+
+        if total_debt is not None and shareholder_equity:
+            return total_debt / shareholder_equity
+
+        return None
+
+    def _get_free_cash_flow_per_share(self, info, cash_flow):
+        quote_type = self._safe_get(info, "quoteType", "").lower()
+        if quote_type in ["etf", "mutualfund"]:
+            return None
+
+        if cash_flow.empty:
+            return None
+
+        latest = cash_flow.iloc[:, 0]
+        operating_cf = self._safe_float(self._safe_get(latest, "Operating Cash Flow", ""))
+        capex = self._safe_float(self._safe_get(latest, "Capital Expenditure", ""))
+
+        if operating_cf is None or capex is None:
+            return None
+
+        fcf = operating_cf - capex
+        shares_outstanding = self._safe_int(self._safe_get(info, "sharesOutstanding", ""))
+        if shares_outstanding is None or shares_outstanding == 0:
+            return None
+
+        if fcf is not None and shares_outstanding:
+            return fcf / shares_outstanding
+
+        return None
+
     def extract_company_profile(self):
         info = self._get_info()
         model = CompanyProfileModel(ticker=self.ticker)
@@ -238,5 +568,85 @@ class StockDataExtractor:
             datetime.fromtimestamp(ipo_ts_ms / 1000, tz=timezone.utc).replace(tzinfo=None)
             if (ipo_ts_ms := self._safe_get(info, "firstTradeDateMilliseconds", None)) else None
         )
+        model.fund_family = (
+            self._safe_get(info, "fundFamily", "")
+            if model.quote_type.lower() in ["etf", "mutualfund"] else None
+        )
+
+        return model
+
+    def extract_fundamentals(self):
+        info = self._get_info()
+        financials = self._get_financials()
+        balance_sheet = self._get_balance_sheet()
+        cash_flow = self._get_cash_flow()
+        quote_type = self._safe_get(info, "quoteType", "")
+        model = FundamentalsModel(ticker=self.ticker)
+        model.currency = self._safe_get(info, "currency", "")
+        model.day = OHLCModel(
+            low=self._safe_float(
+                self._safe_get(info, "dayLow", self._get_price_at_period(period="1d", parameter="low"))
+            ),
+            high=self._safe_float(
+                self._safe_get(info, "dayHigh", self._get_price_at_period(period="1d", parameter="high"))
+            ),
+            open=self._safe_float(
+                self._safe_get(info, "open", self._get_price_at_period(period="1d", parameter="open"))
+            ),
+            close=self._safe_float(
+                self._safe_get(info, "currentPrice", self._get_price_at_period(period="1d", parameter="close"))
+            )
+        )
+        model.one_year = OHLCModel(
+            low=self._safe_float(
+                self._safe_get(info, "fiftyTwoWeekLow", self._get_price_at_period(period="1y", parameter="low"))
+            ),
+            high=self._safe_float(
+                self._safe_get(info, "fiftyTwoWeekHigh", self._get_price_at_period(period="1y", parameter="high"))
+            ),
+            open=self._get_price_at_period(period="1y", parameter="open"),
+            close=self._get_price_at_period(period="1y", parameter="close")
+        )
+        model.trailing_pe = (
+            self._safe_float(self._safe_get(info, "trailingPE", ""))
+            if quote_type.lower() not in ["etf", "mutualfund"] else None
+        )
+        model.forward_pe = (
+            self._safe_float(self._safe_get(info, "forwardPE", ""))
+            if quote_type.lower() not in ["etf", "mutualfund"] else None
+        )
+        model.trailing_eps = (
+            self._safe_float(self._safe_get(info, "trailingEps", ""))
+            if quote_type.lower() not in ["etf", "mutualfund"] else None
+        )
+        model.forward_eps = (
+            self._safe_float(self._safe_get(info, "forwardEps", ""))
+            if quote_type.lower() not in ["etf", "mutualfund"] else None
+        )
+        model.nav_price = (
+            self._safe_float(self._safe_get(info, "navPrice", ""))
+            if quote_type.lower() in ["etf", "mutualfund"] else None
+        )
+        model.dist_yield = (
+            self._safe_float(self._safe_get(info, "yield", ""))
+            if quote_type.lower() in ["etf", "mutualfund"] else None
+        )
+        model.expense_ratio = (
+            self._safe_float(self._safe_get(info, "expenseRatio", ""))
+            if quote_type.lower() in ["etf", "mutualfund"] else None
+        )
+        model.peg = self._get_peg(info=info, fundamentals=model)
+        model.price_to_book = self._get_price_to_book(info=info)
+        model.price_to_sales = self._get_price_to_sales(info=info)
+        model.ev_ebitda = self._get_ev_ebitda(info=info)
+        model.gross_margin = self._get_gross_margin(info=info, financials=financials)
+        model.operating_margin = self._get_operating_margin(info=info, financials=financials)
+        model.profit_margin = self._get_profit_margin(info=info, financials=financials)
+        model.return_on_equity = self._get_return_on_equity(info=info, financials=financials,
+                                                            balance_sheet=balance_sheet)
+        model.return_on_assets = self._get_return_on_assets(info=info, financials=financials,
+                                                            balance_sheet=balance_sheet)
+        model.debt_to_equity = self._get_debt_to_equity(info=info, balance_sheet=balance_sheet)
+        model.free_cash_flow_per_share = self._get_free_cash_flow_per_share(info=info, cash_flow=cash_flow)
 
         return model
