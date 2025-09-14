@@ -211,3 +211,4 @@ flake8-report
 
 # Ignore pytest report
 pytest_results.html
+test.py
