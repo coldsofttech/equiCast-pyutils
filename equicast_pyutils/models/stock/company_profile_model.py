@@ -19,7 +19,7 @@ class CompanyAddressModel(ExportableModel):
     region: str = field(default=None, init=False)
 
     @property
-    def is_empty(self) -> bool:
+    def empty(self) -> bool:
         """Check if the model is empty."""
         return False if self.country else True
 
@@ -42,7 +42,7 @@ class CompanyOfficerModel(ExportableModel):
     title: str = field(default=None, init=False)
 
     @property
-    def is_empty(self) -> bool:
+    def empty(self) -> bool:
         """Check if the model is empty."""
         return False if self.name else True
 
@@ -86,7 +86,7 @@ class CompanyProfileModel(ExportableModel):
     )
 
     @property
-    def is_empty(self) -> bool:
+    def empty(self) -> bool:
         """Check if the model is empty."""
         return False if self.exchange else True
 
