@@ -17,7 +17,7 @@ class DividendModel(ExportableModel):
     )
 
     @property
-    def is_empty(self) -> bool:
+    def empty(self) -> bool:
         """Check if the model is empty."""
         return len(self.prices) == 0
 

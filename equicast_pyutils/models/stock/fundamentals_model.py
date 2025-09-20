@@ -5,40 +5,7 @@ from typing import Dict
 
 import pandas as pd
 
-from equicast_pyutils.models import ExportableModel
-
-
-@dataclass
-class OHLCModel(ExportableModel):
-    low: float
-    high: float
-    open: float
-    close: float
-    average: float = field(default=None, init=False)
-
-    def __post_init__(self):
-        self.average = (
-            (self.low + self.high) / 2
-            if self.low is not None and self.high is not None
-            else None
-        )
-
-    @property
-    def is_empty(self) -> bool:
-        """Check if the model is empty."""
-        return False if self.low else True
-
-    def _to_dataframe(self) -> pd.DataFrame:
-        """Convert OHLC into a pandas DataFrame for export."""
-        data = asdict(self)
-        df = pd.DataFrame([data])
-        return df
-
-    def to_parquet(self, filepath: str):
-        """Export OHLC to a parquet file."""
-        df = self._to_dataframe()
-        if not df.empty:
-            df.to_parquet(filepath, index=False)
+from equicast_pyutils.models import ExportableModel, OHLCModel
 
 
 @dataclass
@@ -70,7 +37,7 @@ class FundamentalsModel(ExportableModel):
     )
 
     @property
-    def is_empty(self) -> bool:
+    def empty(self) -> bool:
         """Check if the model is empty."""
         return False if self.currency else True
 
