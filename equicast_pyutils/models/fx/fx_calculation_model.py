@@ -51,5 +51,7 @@ class FxCalculationModel(ExportableModel):
             return
 
         os.makedirs(base_folder, exist_ok=True)
-        file_path = Path(base_folder) / f"fx={self.pair}" / filename
+        fx_folder = Path(base_folder) / f"fx={self.pair}"
+        fx_folder.mkdir(parents=True, exist_ok=True)
+        file_path = fx_folder / filename
         df.to_parquet(file_path, index=False, engine="pyarrow")
